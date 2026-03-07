@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+vendor/
+.venv/
+__pycache__/
+*.pyc
+
+# Build
+dist/
+build/
+.next/
+out/
+*.exe
+
+# Environment
+.env
+.env.local
+.env.*.local
+.pem
+.key
+.crt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS Store
+
+# Terraform
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/terraform.tfplan
+terraform/.terraform.lock.hcl
+
+# Docker
+tmp/
+uploads/
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+.lcov
+htmlcov/
+
+# Helm
+helm/charts/

@@ -1,0 +1,61 @@
+version: '3.9'
+
+services:
+  postgres-test:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_DB: streamplatform_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - test-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-test:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  auth-service-test:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://testuser:testpass@postgres-test:5432/streamplatform_test
+      REDIS_URL: redis://redis-test:6379
+      JWT_SECRET: test-secret-key
+      PORT: 3001
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    command: ["npm", "test"]
+
+  integration-tests:
+    build:
+      context: ./tests/integration
+      dockerfile: Dockerfile
+    environment:
+      API_BASE_URL: http://auth-service-test:3001
+      TEST_ENV: ci
+    depends_on:
+      - auth-service-test
+    command: ["npm", "run", "test:integration"]
+
+volumes:
+  test-postgres-data:

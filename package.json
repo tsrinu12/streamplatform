@@ -1,0 +1,42 @@
+{
+  "name": "streamplatform",
+  "version": "1.0.0",
+  "description": "Enterprise Production-Grade Multi-Environment Microservices Platform for Video Streaming",
+  "main": "index.js",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend",
+    "services/*"
+  ],
+  "scripts": {
+    "start": "docker-compose up -d",
+    "stop": "docker-compose down",
+    "build": "docker-compose build",
+    "logs": "docker-compose logs -f",
+    "test": "npm run test --workspaces",
+    "lint": "npm run lint --workspaces",
+    "format": "npm run format --workspaces",
+    "clean": "docker-compose down -v",
+    "setup": "bash scripts/setup.sh"
+  },
+  "keywords": [
+    "streaming",
+    "video",
+    "microservices",
+    "docker",
+    "kubernetes"
+  ],
+  "author": "StreamPlatform Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "prettier": "^3.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}

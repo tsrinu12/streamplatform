@@ -1,0 +1,60 @@
+# Staging environment values
+environment: staging
+
+replicaCount:
+  auth: 2
+  video: 4
+  ai: 2
+  reward: 2
+  transcode: 2
+  notification: 2
+
+resources:
+  auth:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  video:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+config:
+  logLevel: "info"
+  database:
+    host: "stage-documentdb.cluster.us-east-1.docdb.amazonaws.com"
+    port: 27017
+    name: "streamplatform_stage"
+  redis:
+    host: "stage-elasticache.cluster.us-east-1.cache.amazonaws.com"
+    port: 6379
+  kafka:
+    brokers: "stage-kafka-1.us-east-1.amazonaws.com:9092,stage-kafka-2.us-east-1.amazonaws.com:9092"
+  s3:
+    bucket: "streamplatform-videos-stage"
+    region: "us-east-1"
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: stage.api.streamplatform.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: streamplatform-tls-stage
+      hosts:
+        - stage.api.streamplatform.com

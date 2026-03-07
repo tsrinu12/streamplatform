@@ -1,0 +1,86 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  test-auth:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm ci --prefix services/auth-service
+      - run: npm run lint --prefix services/auth-service
+      - run: npm run test --prefix services/auth-service
+      - run: npm run build --prefix services/auth-service
+
+  test-video:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version: 1.21
+      - run: cd services/video-service && go mod download
+      - run: cd services/video-service && go fmt ./...
+      - run: cd services/video-service && go vet ./...
+      - run: cd services/video-service && go test -v ./...
+      - run: cd services/video-service && go build -o video-service
+
+  test-ai:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.11']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: cd services/ai-service && pip install -r requirements-dev.txt
+      - run: cd services/ai-service && black --check .
+      - run: cd services/ai-service && pylint src/
+      - run: cd services/ai-service && pytest --cov=src tests/
+
+  test-reward:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.11']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: cd services/reward-service && pip install -r requirements-dev.txt
+      - run: cd services/reward-service && black --check .
+      - run: cd services/reward-service && pylint src/
+      - run: cd services/reward-service && pytest --cov=src tests/
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm ci --prefix frontend/web-app
+      - run: npm run lint --prefix frontend/web-app
+      - run: npm run type-check --prefix frontend/web-app
+      - run: npm run build --prefix frontend/web-app
+      - run: npm run test --prefix frontend/web-app

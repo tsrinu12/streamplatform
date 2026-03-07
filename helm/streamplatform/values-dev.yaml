@@ -1,0 +1,54 @@
+# Development environment values
+environment: development
+
+replicaCount:
+  auth: 1
+  video: 2
+  ai: 1
+  reward: 1
+  transcode: 1
+  notification: 1
+
+resources:
+  auth:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 200m
+      memory: 512Mi
+  video:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+autoscaling:
+  enabled: false
+
+config:
+  logLevel: "debug"
+  database:
+    host: "dev-mongodb.default.svc.cluster.local"
+    port: 27017
+    name: "streamplatform_dev"
+  redis:
+    host: "dev-redis-master.default.svc.cluster.local"
+    port: 6379
+  kafka:
+    brokers: "dev-kafka.default.svc.cluster.local:9092"
+  s3:
+    bucket: "streamplatform-videos-dev"
+    region: "us-east-1"
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: dev.api.streamplatform.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []

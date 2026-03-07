@@ -1,0 +1,61 @@
+# Production environment values
+
+environment: production
+
+replicaCount:
+  auth: 5
+  video: 10
+  ai: 3
+  reward: 3
+  transcode: 5
+  notification: 3
+
+resources:
+  auth:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  video:
+    requests:
+      cpu: 2000m
+      memory: 4Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 50
+  targetCPUUtilizationPercentage: 70
+
+config:
+  logLevel: "info"
+  database:
+    host: "prod-documentdb.cluster.us-east-1.docdb.amazonaws.com"
+    port: 27017
+    name: "streamplatform_prod"
+  redis:
+    host: "prod-elasticache.cluster.us-east-1.cache.amazonaws.com"
+    port: 6379
+  kafka:
+    brokers: "prod-kafka-1.us-east-1.amazonaws.com:9092,prod-kafka-2.us-east-1.amazonaws.com:9092"
+  s3:
+    bucket: "streamplatform-videos-prod"
+    region: "us-east-1"
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: api.streamplatform.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: streamplatform-tls
+      hosts:
+        - api.streamplatform.com

@@ -1,0 +1,17 @@
+apiVersion: v2
+name: streamplatform
+description: StreamPlatform - Enterprise-grade video streaming microservices platform
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - video-streaming
+  - microservices
+  - kubernetes
+  - streaming-platform
+maintainers:
+  - name: StreamPlatform Team
+    email: team@streamplatform.io
+sources:
+  - https://github.com/tsrinu12/streamplatform
+icon: https://streamplatform.io/icon.png

@@ -1,0 +1,29 @@
+alert-rules.yml  groups:
+  - name: streamplatform-alerts
+    rules:
+      - alert: HighCpuUsage
+        expr: container_cpu_usage_seconds_total{container!=\"\"} > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High CPU usage on {{ $labels.pod }}
+          description: CPU usage is above 80% for 5 minutes.
+
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Service {{ $labels.instance }} is down
+          description: Service has been down for more than 1 minute.
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~\"5..\"}[5m]) / rate(http_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: High error rate on {{ $labels.service }}
+          description: Error rate is above 5% for 2 minutes.

@@ -22,7 +22,7 @@ services:
       - streamplatform
 
   mongodb:
-    image: mongo:6.0-alpine
+    image: mongo:7.0
     container_name: streamplatform-mongodb
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-streamuser}

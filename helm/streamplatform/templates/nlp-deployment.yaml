@@ -1,0 +1,42 @@
+{{- if .Values.nlp.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nlp-service
+  labels:
+    app: nlp-service
+    tier: ai
+spec:
+  replicas: {{ .Values.nlp.replicaCount }}
+  selector:
+    matchLabels:
+      app: nlp-service
+  template:
+    metadata:
+      labels:
+        app: nlp-service
+        sidecar.istio.io/inject: "true"
+    spec:
+      containers:
+      - name: nlp-service
+        image: "{{ .Values.nlp.image.repository }}:{{ .Values.nlp.image.tag }}"
+        ports:
+        - containerPort: 8000
+        env:
+        - name: DB_HOST
+          value: {{ .Values.config.database.host | quote }}
+        - name: KAFKA_BROKERS
+          value: {{ .Values.config.kafka.brokers | quote }}
+        resources:
+          {{- toYaml .Values.nlp.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+{{- end }}

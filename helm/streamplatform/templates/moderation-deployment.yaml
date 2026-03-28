@@ -1,0 +1,31 @@
+{{- if .Values.moderation.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moderation-service
+  labels:
+    app: moderation-service
+    tier: ai
+    {{- include "streamplatform.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.moderation.replicaCount }}
+  selector:
+    matchLabels:
+      app: moderation-service
+  template:
+    metadata:
+      labels:
+        app: moderation-service
+        tier: ai
+    spec:
+      containers:
+        - name: moderation-service
+          image: "{{ .Values.moderation.image.repository }}:{{ .Values.moderation.image.tag }}"
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ENABLE_VISUAL_MODERATION
+              value: "true"
+          resources:
+            {{- toYaml .Values.moderation.resources | nindent 12 }}
+{{- end }}

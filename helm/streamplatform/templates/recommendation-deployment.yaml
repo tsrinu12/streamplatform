@@ -1,0 +1,31 @@
+{{- if .Values.recommendation.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommendation-service
+  labels:
+    app: recommendation-service
+    tier: ai
+    {{- include "streamplatform.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.recommendation.replicaCount }}
+  selector:
+    matchLabels:
+      app: recommendation-service
+  template:
+    metadata:
+      labels:
+        app: recommendation-service
+        tier: ai
+    spec:
+      containers:
+        - name: recommendation-service
+          image: "{{ .Values.recommendation.image.repository }}:{{ .Values.recommendation.image.tag }}"
+          ports:
+            - containerPort: 8080
+          env:
+            - name: MODEL_TYPE
+              value: "LightGCN"
+          resources:
+            {{- toYaml .Values.recommendation.resources | nindent 12 }}
+{{- end }}

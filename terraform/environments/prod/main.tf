@@ -1,94 +1,104 @@
-terraform {
-  required_version = ">= 1.0"
-  
-  backend "s3" {
-    bucket         = "streamplatform-terraform-state-prod"
-    key            = "prod/terraform.tfstate"
-    region         = "us-east-1"
-    encrypt        = true
-    dynamodb_table = "streamplatform-terraform-lock-prod"
-  }
-  
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
 provider "aws" {
-  region = var.aws_region
-  
-  default_tags {
-    tags = {
-      Environment = "production"
-      Project     = "StreamPlatform"
-      ManagedBy   = "Terraform"
-    }
-  }
+  region = var.region
 }
 
+# Production VPC with public and private subnets
 module "vpc" {
   source = "../../modules/vpc"
-  
-  environment = "prod"
-  vpc_cidr    = var.vpc_cidr
-  azs         = var.availability_zones
+
+  name = "streamplatform-prod-vpc"
+  cidr = "10.0.0.0/16"
+
+  azs             = ["ap-south-1a", "ap-south-1b", "ap-south-1c"]
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+
+  enable_nat_gateway = true
+  single_nat_gateway = false
+  enable_vpn_gateway = false
+
+  tags = {
+    Environment = "production"
+    Project     = "StreamPlatform"
+  }
 }
 
+# Production EKS Cluster with GPU support
 module "eks" {
   source = "../../modules/eks"
-  
-  cluster_name    = "${var.project_name}-prod"
-  cluster_version = var.eks_cluster_version
+
+  cluster_name    = "streamplatform-prod-cluster"
+  cluster_version = "1.29"
   vpc_id          = module.vpc.vpc_id
-  subnet_ids      = module.vpc.private_subnet_ids
-}
+  subnet_ids      = module.vpc.private_subnets
 
-module "rds" {
-  source = "../../modules/rds"
-  
-  identifier          = "${var.project_name}-prod"
-  instance_class      = var.rds_instance_class
-  allocated_storage   = var.rds_allocated_storage
-  engine_version      = var.rds_engine_version
-  multi_az            = true
-  vpc_id              = module.vpc.vpc_id
-  subnet_ids          = module.vpc.database_subnet_ids
-}
+  eks_managed_node_groups = {
+    # General purpose microservices
+    general = {
+      min_size     = 3
+      max_size     = 10
+      desired_size = 3
+      instance_types = ["m5.large"]
+    }
 
-module "elasticache" {
-  source = "../../modules/elasticache"
-  
-  replication_group_id          = "${var.project_name}-prod-redis"
-  replication_group_description = "Production Redis cluster"
-  node_type                     = var.elasticache_node_type
-  number_cache_clusters         = var.elasticache_num_nodes
-  subnet_ids                    = module.vpc.private_subnet_ids
-  security_group_ids            = [module.vpc.default_security_group_id]
-  
+    # GPU-optimized for V-JEPA and AI inference
+    ai_inference = {
+      min_size     = 2
+      max_size     = 5
+      desired_size = 2
+      instance_types = ["g4dn.xlarge"]
+      labels = {
+        workload = "ai-inference"
+      }
+      taints = [
+        {
+          key    = "nvidia.com/gpu"
+          value  = "true"
+          effect = "NO_SCHEDULE"
+        }
+      ]
+    }
+  }
+
+  # Security best practices: Enable private access and disable public access
+  cluster_endpoint_public_access  = false
+  cluster_endpoint_private_access = true
+
+  # KMS encryption for secrets
+  create_kms_key = true
+  cluster_encryption_config = {
+    resources = ["secrets"]
+  }
+
   tags = {
     Environment = "production"
   }
 }
 
-module "documentdb" {
-  source = "../../modules/documentdb"
-  
-  cluster_identifier = "${var.project_name}-prod"
-  master_username    = var.documentdb_master_username
-  master_password    = var.documentdb_master_password
-  instance_count     = var.documentdb_instance_count
-  instance_class     = var.documentdb_instance_class
-  subnet_ids         = module.vpc.database_subnet_ids
-  vpc_security_group_ids = [module.vpc.default_security_group_id]
-  
-  backup_retention_period = 30
-  preferred_backup_window = "03:00-04:00"
-  skip_final_snapshot     = false
-  
-  tags = {
-    Environment = "production"
+# Production Managed Streaming for Kafka (MSK)
+module "msk" {
+  source = "../../modules/msk"
+
+  cluster_name           = "streamplatform-prod-msk"
+  kafka_version          = "3.6.0"
+  number_of_broker_nodes = 3
+  instance_type          = "kafka.m5.large"
+  vpc_id                 = module.vpc.vpc_id
+  subnet_ids             = module.vpc.private_subnets
+
+  encryption_info = {
+    encryption_at_rest_kms_key_arn = module.eks.kms_key_arn
+    encryption_in_transit = {
+      client_broker = "TLS"
+      in_cluster    = true
+    }
   }
+}
+
+# AWS WAF for public-facing web-app
+module "waf" {
+  source = "../../modules/waf"
+
+  name = "streamplatform-prod-waf"
+  scope = "CLOUDFRONT"
 }

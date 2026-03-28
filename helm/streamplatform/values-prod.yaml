@@ -1,61 +1,97 @@
-# Production environment values
+# StreamPlatform Production Helm Values
+# Environment: production
+# Region: ap-south-1
 
-environment: production
+global:
+  environment: production
+  region: ap-south-1
+  domain: api.streamplatform.com
 
-replicaCount:
-  auth: 5
-  video: 10
-  ai: 3
-  reward: 3
-  transcode: 5
-  notification: 3
-
-resources:
-  auth:
-    requests:
-      cpu: 1000m
-      memory: 2Gi
-    limits:
-      cpu: 2000m
-      memory: 4Gi
-  video:
-    requests:
-      cpu: 2000m
-      memory: 4Gi
-    limits:
-      cpu: 4000m
-      memory: 8Gi
-
-autoscaling:
+# AI Services Configurations
+vjepa:
   enabled: true
-  minReplicas: 3
-  maxReplicas: 50
-  targetCPUUtilizationPercentage: 70
+  replicaCount: 3
+  image:
+    repository: tsrinu12/vjepa-service
+    tag: latest
+  resources:
+    requests:
+      cpu: "2"
+      memory: "8Gi"
+    limits:
+      cpu: "4"
+      memory: "16Gi"
+      nvidia.com/gpu: 1
+  env:
+    MODEL_PATH: "/models/vjepa_main.pth"
+    ENABLE_GPU: "true"
+  nodeSelector:
+    instance-type: p3.2xlarge # GPU instance
 
+nlp:
+  enabled: true
+  replicaCount: 5
+  image:
+    repository: tsrinu12/nlp-service
+    tag: latest
+  resources:
+    requests:
+      cpu: "1"
+      memory: "4Gi"
+    limits:
+      cpu: "2"
+      memory: "8Gi"
+
+search:
+  enabled: true
+  replicaCount: 5
+  image:
+    repository: tsrinu12/search-service
+    tag: latest
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "2Gi"
+    limits:
+      cpu: "1"
+      memory: "4Gi"
+
+# Shared Infrastructure
 config:
   logLevel: "info"
   database:
-    host: "prod-documentdb.cluster.us-east-1.docdb.amazonaws.com"
+    host: "streamplatform-prod-db.ap-south-1.docdb.amazonaws.com"
     port: 27017
-    name: "streamplatform_prod"
   redis:
-    host: "prod-elasticache.cluster.us-east-1.cache.amazonaws.com"
-    port: 6379
+    host: "streamplatform-prod-redis.ap-south-1.cache.amazonaws.com"
   kafka:
-    brokers: "prod-kafka-1.us-east-1.amazonaws.com:9092,prod-kafka-2.us-east-1.amazonaws.com:9092"
+    brokers: "msk-broker-1.ap-south-1.amazonaws.com:9092,msk-broker-2.ap-south-1.amazonaws.com:9092"
   s3:
-    bucket: "streamplatform-videos-prod"
-    region: "us-east-1"
+    bucket: "streamplatform-prod-data"
+    region: "ap-south-1"
 
+# Service Mesh (Istio)
+istio:
+  enabled: true
+  injection: enabled
+  mtls:
+    mode: STRICT
+
+# Ingress / Edge Security
 ingress:
   enabled: true
-  className: "nginx"
+  className: "alb"
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
   hosts:
     - host: api.streamplatform.com
       paths:
-        - path: /
-          pathType: Prefix
-  tls:
-    - secretName: streamplatform-tls
-      hosts:
-        - api.streamplatform.com
+        - path: /vjepa
+          service: vjepa-service
+        - path: /nlp
+          service: nlp-service
+        - path: /search
+          service: search-service

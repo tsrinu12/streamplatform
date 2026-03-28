@@ -1,0 +1,19 @@
+{{- if .Values.vjepa.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: vjepa-service
+  labels:
+    app: vjepa-service
+    tier: ai
+    {{- include "streamplatform.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.vjepa.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.vjepa.service.port | default 80 }}
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app: vjepa-service
+{{- end }}

@@ -1,250 +1,388 @@
-# StreamPlatform Complete Setup Guide
+# StreamPlatform - Setup Guide
 
-## Quick Start - Automated Setup
+Complete setup instructions for local development, testing, and deployment of the StreamPlatform microservices platform.
 
-To populate this repository with all production-grade files and structures, follow these steps:
-
-### Option 1: Using the Automated Script (Recommended)
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/tsrinu12/streamplatform.git
-cd streamplatform
-
-# 2. Download and run the setup script
-curl -fsSL https://raw.githubusercontent.com/tsrinu12/streamplatform/main/scripts/setup.sh | bash
-
-# 3. Verify the structure
-ls -la
-
-# 4. Commit all files
-git add .
-git commit -m "feat: Complete StreamPlatform enterprise project structure"
-git push
-```
-
-### What Gets Created
-
-✅ **Root Configuration Files** (15+ files)
-- .gitignore, .editorconfig, .env.example
-- Makefile, CHANGELOG.md, CONTRIBUTING.md, LICENSE
-- docker-compose.yaml, docker-compose.dev.yaml, docker-compose.test.yaml, docker-compose.monitoring.yaml
-
-✅ **GitHub Workflows** (8 CI/CD files)
-- ci.yaml, cd-dev.yaml, cd-stage.yaml, cd-prod.yaml
-- rollback.yaml, terraform-plan.yaml, terraform-apply.yaml, nightly-security.yaml
-
-✅ **Terraform Infrastructure** (40+ files)
-- Backend initialization
-- Modules: VPC, EKS, RDS, DocumentDB, ElastiCache, MSK, S3, CloudFront, ECR, OpenSearch, WAF, Secrets Manager, CloudWatch
-- Environment configs: dev, stage, prod
-
-✅ **Microservices** (5 services with complete structure)
-- Auth Service (TypeScript/Node.js)
-- Video Service (Go)
-- AI Service (Python)
-- Reward Service (Python)  
-- Transcode Worker (Python/Celery)
-
-✅ **Frontend** (Next.js Application)
-- Complete app structure with routing
-- Components, hooks, stores, types
-- Authentication, video player, rewards system
-
-✅ **Database** (Migrations & Schemas)
-- PostgreSQL migrations (4 files)
-- MongoDB initialization
-- Database seeds for dev/stage
-
-✅ **Kubernetes & Helm**
-- Helm charts for StreamPlatform
-- ArgoCD configurations
-- Cluster addons (AWS Load Balancer, External DNS, etc)
-- Observability stack setup
-
-✅ **Monitoring & Observability**
-- Prometheus configuration
-- Grafana dashboards
-- AlertManager setup
-- Distributed tracing (Tempo)
-
-✅ **Documentation**
-- Architecture documentation
-- API reference
-- Deployment guide
-- Runbooks & disaster recovery
-
-✅ **Load Testing**
-- K6 performance test scripts
-- Smoke, load, stress, spike tests
-
-## Project Structure
-
-```
-streamplatform/
-├── .github/
-│   ├── workflows/          # CI/CD pipelines
-│   ├── CODEOWNERS
-│   └── pull_request_template.md
-├── terraform/
-│   ├── backend-init/       # S3 + DynamoDB setup
-│   ├── modules/            # Reusable infrastructure modules
-│   └── environments/       # dev, stage, prod configs
-├── helm/
-│   └── streamplatform/     # Kubernetes Helm charts
-├── k8s/
-│   ├── argocd/            # GitOps deployments
-│   ├── cluster-addons/    # AWS Load Balancer, External DNS, etc
-│   └── observability/     # Prometheus, Grafana, Loki, Tempo
-├── services/
-│   ├── auth-service/      # Authentication & authorization
-│   ├── video-service/     # Video upload & streaming
-│   ├── ai-service/        # ML & recommendations
-│   ├── reward-service/    # Points & gamification
-│   ├── transcode-worker/  # Video transcoding
-│   └── notification-service/ # Notifications
-├── frontend/
-│   └── web-app/          # Next.js web application
-├── db/
-│   ├── migrations/        # SQL migrations
-│   ├── seeds/            # Database seeds
-│   └── mongo/            # MongoDB initialization
-├── monitoring/
-│   ├── prometheus/       # Metrics collection
-│   ├── grafana/          # Visualization
-│   └── alertmanager/     # Alerting
-├── loadtest/
-│   └── k6/              # Performance testing
-├── docs/
-│   ├── architecture/
-│   ├── api-reference.md
-│   ├── deployment-guide.md
-│   ├── runbook.md
-│   └── adr/             # Architecture Decision Records
-├── scripts/
-│   ├── setup.sh         # Main setup script
-│   ├── deploy.sh        # Deployment script
-│   └── ...              # Other utility scripts
-└── nginx/              # API Gateway configs
-
-```
-
-## Key Files Created
-
-### Root Configuration
-- `.env.example` - Environment variables template
-- `.gitignore` - Git ignore patterns
-- `.editorconfig` - Editor configuration
-- `Makefile` - Build & deployment commands
-- `docker-compose.yaml` - Full stack docker setup
-- `docker-compose.dev.yaml` - Development overrides
-- `docker-compose.test.yaml` - Testing environment
-- `docker-compose.monitoring.yaml` - Monitoring stack
-
-### GitHub Workflows (CI/CD)
-- `.github/workflows/ci.yaml` - Code quality & testing
-- `.github/workflows/cd-dev.yaml` - Deploy to dev
-- `.github/workflows/cd-stage.yaml` - Deploy to staging
-- `.github/workflows/cd-prod.yaml` - Deploy to production
-- `.github/workflows/rollback.yaml` - Rollback procedures
-- `.github/workflows/terraform-plan.yaml` - Plan infrastructure changes
-- `.github/workflows/terraform-apply.yaml` - Apply infrastructure changes
-- `.github/workflows/nightly-security.yaml` - Security scans
-
-### Services
-
-Each service includes:
-- `Dockerfile` - Production image
-- `Dockerfile.dev` - Development image
-- Complete source structure
-- Tests
-- Configuration
-
-### Database
-- `db/migrations/001_initial_schema.sql` - Users, sessions, OTP
-- `db/migrations/002_reward_tables.sql` - Reward system
-- `db/migrations/003_indexes.sql` - Performance indexes
-- `db/migrations/004_functions.sql` - PL/pgSQL functions
-- `db/mongo/init.js` - MongoDB collections & indexes
-
-## Technologies Included
-
-- **Backend Services**: TypeScript, Go, Python
-- **Frontend**: Next.js, React, TailwindCSS
-- **Infrastructure**: Terraform, AWS
-- **Container**: Docker, Docker Compose
-- **Orchestration**: Kubernetes, Helm, ArgoCD
-- **Databases**: PostgreSQL, MongoDB, Redis, ElastiCache
-- **Messaging**: Kafka, AWS SNS/SQS
-- **Search**: Elasticsearch, Qdrant
-- **Monitoring**: Prometheus, Grafana, Loki, Tempo
-- **CI/CD**: GitHub Actions
-- **Load Testing**: K6
-
-## Development Workflow
-
-1. **Local Development**
-   ```bash
-   make up          # Start all services
-   make logs        # View logs
-   make test        # Run tests
-   make lint        # Lint code
-   ```
-
-2. **Deploy to Dev**
-   ```bash
-   git push origin feature-branch
-   # GitHub Actions automatically deploys to dev environment
-   ```
-
-3. **Deploy to Stage/Prod**
-   - Create Pull Request
-   - Get review & approval
-   - Merge to main branch
-   - GitHub Actions deploys to staging
-   - Manual approval for production
-
-## Configuration
-
-### Environment Variables
-Update `.env` with your values for each environment:
-- AWS credentials
-- Database passwords
-- API keys (Google, OpenAI, Razorpay, etc)
-- Service ports
-
-### Terraform Variables
-Update `terraform/environments/{env}/terraform.tfvars` for each environment
-
-### Kubernetes Secrets
-Create secrets in `k8s/secrets/` for sensitive data
-
-## Monitoring & Observability
-
-- **Prometheus**: `http://localhost:9090` (localhost:9090 when running locally)
-- **Grafana**: `http://localhost:3001` (dashboards)
-- **Jaeger Traces**: Distributed tracing for requests
-- **Loki**: Log aggregation
-
-## Support & Documentation
-
-- Architecture: See `docs/architecture/`
-- API Reference: See `docs/api-reference.md`
-- Deployment: See `docs/deployment-guide.md`
-- Runbooks: See `docs/runbook.md`
-- ADRs: See `docs/adr/`
-
-## Next Steps
-
-1. ✅ Run the automated setup script
-2. ✅ Review the created structure
-3. ✅ Update `.env` with your configuration
-4. ✅ Configure Terraform variables for your AWS account
-5. ✅ Update service configurations as needed
-6. ✅ Start developing!
+Last Updated: April 6, 2026 | Repository: tsrinu12/streamplatform | Total Commits: 148+
 
 ---
 
-**Created**: 2026-03-07
-**Version**: 1.0.0
-**Status**: Production Ready
+## Prerequisites
+
+Before setting up StreamPlatform, ensure you have the following installed:
+
+| Tool | Version | Purpose |
+|------|---------|--------|
+| Git | 2.35+ | Source control |
+| Docker | 24.0+ | Containerization |
+| Docker Compose | 2.20+ | Local multi-container setup |
+| Python | 3.11+ | Microservices runtime |
+| Node.js | 18+ | Frontend build tools |
+| Terraform | 1.6+ | Infrastructure provisioning |
+| kubectl | 1.28+ | Kubernetes CLI |
+| Helm | 3.13+ | Kubernetes package manager |
+| AWS CLI | 2.15+ | AWS cloud management |
+| Make | 4.0+ | Build automation |
+
+---
+
+## Quick Start
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/tsrinu12/streamplatform.git
+cd streamplatform
+```
+
+### 2. Configure Environment Variables
+
+```bash
+cp .env.example .env
+# Edit .env with your local configuration
+```
+
+### 3. Start Local Development Environment
+
+```bash
+make up
+# Or manually:
+docker-compose up -d
+```
+
+### 4. Verify Services
+
+```bash
+make health
+# Check individual services:
+docker-compose ps
+```
+
+---
+
+## Local Development Setup
+
+### Option A: Docker Compose (Recommended)
+
+Start all services with Docker Compose:
+
+```bash
+# Start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop all services
+docker-compose down
+```
+
+### Option B: Individual Services
+
+Run services individually for debugging:
+
+```bash
+# Start a specific service
+docker-compose up -d auth-service
+
+# Run in foreground for debugging
+docker-compose up ai-service
+```
+
+### Option C: Local Python Development
+
+For direct Python development without Docker:
+
+```bash
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# or
+venv\Scripts\activate  # Windows
+
+# Install service dependencies
+cd services/ai-service
+pip install -r requirements.txt
+
+# Run the service
+python main.py
+```
+
+---
+
+## Service Configuration
+
+### Microservices (services/)
+
+Each microservice is self-contained with its own Dockerfile and requirements:
+
+| Service | Port | Docker Command |
+|---------|------|---------------|
+| ai-service | 8001 | `docker-compose up ai-service` |
+| auth-service | 8002 | `docker-compose up auth-service` |
+| computer-vision-service | 8003 | `docker-compose up computer-vision-service` |
+| nlp-service | 8004 | `docker-compose up nlp-service` |
+| notification-service | 8005 | `docker-compose up notification-service` |
+| recommendation-service | 8006 | `docker-compose up recommendation-service` |
+| reward-service | 8007 | `docker-compose up reward-service` |
+| search-service | 8008 | `docker-compose up search-service` |
+| transcode-service | 8009 | `docker-compose up transcode-service` |
+| video-service | 8010 | `docker-compose up video-service` |
+
+### Environment Variables
+
+Copy and configure `.env.example`:
+
+```bash
+cp .env.example .env
+```
+
+Key variables to configure:
+
+| Variable | Description | Example |
+|----------|-------------|--------|
+| `AWS_REGION` | AWS region for cloud services | `us-east-1` |
+| `AWS_ACCESS_KEY_ID` | AWS access key | (from AWS IAM) |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key | (from AWS IAM) |
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@localhost:5432/streamplatform` |
+| `REDIS_URL` | Redis connection string | `redis://localhost:6379` |
+| `JWT_SECRET` | JWT signing secret | `your-secret-key` |
+| `OPENAI_API_KEY` | OpenAI API key (for NLP) | (from OpenAI) |
+| `SMTP_HOST` | Email server host | `smtp.gmail.com` |
+| `SMTP_PORT` | Email server port | `587` |
+
+---
+
+## Database Setup
+
+### PostgreSQL (Local)
+
+```bash
+# Start PostgreSQL via Docker Compose
+docker-compose up -d postgres
+
+# Run migrations
+psql -h localhost -U postgres -d streamplatform -f db/migrations/001_initial_schema.sql
+psql -h localhost -U postgres -d streamplatform -f db/migrations/002_user_profiles.sql
+psql -h localhost -U postgres -d streamplatform -f db/migrations/003_video_metadata.sql
+```
+
+### Check Migrations
+
+```bash
+# List all migrations
+ls db/migrations/
+
+# Verify schema
+psql -h localhost -U postgres -d streamplatform -c "\dt"
+```
+
+---
+
+## Infrastructure Setup (Terraform)
+
+### Initialize Terraform
+
+```bash
+cd terraform
+
+# Initialize backend
+terraform init -backend-config=backend-init/backend.hcl
+
+# Initialize modules for dev environment
+cd environments/dev
+terraform init
+```
+
+### Plan Infrastructure Changes
+
+```bash
+# Review planned changes
+terraform plan
+
+# Apply changes
+terraform apply -auto-approve
+```
+
+### Deploy to Different Environments
+
+```bash
+# Development
+cd terraform/environments/dev && terraform apply
+
+# Staging
+cd terraform/environments/stage && terraform apply
+
+# Production
+cd terraform/environments/prod && terraform apply
+```
+
+---
+
+## Kubernetes Deployment
+
+### Local Kubernetes (kind/minikube)
+
+```bash
+# Create a local cluster with kind
+kind create cluster --name streamplatform
+
+# Apply Kubernetes manifests
+kubectl apply -f k8s/
+
+# Install Helm charts
+helm install streamplatform ./helm/streamplatform --values ./helm/streamplatform/values-dev.yaml
+```
+
+### AWS EKS
+
+```bash
+# Update kubeconfig for EKS cluster
+aws eks update-kubeconfig --name streamplatform-eks --region us-east-1
+
+# Verify cluster connection
+kubectl get nodes
+
+# Deploy application
+kubectl apply -f k8s/
+```
+
+---
+
+## CI/CD Pipeline
+
+### GitHub Actions Workflows
+
+| Workflow | File | Description |
+|----------|------|-------------|
+| CI Pipeline | `ci.yaml` | Lint, test, build on every push |
+| CI/CD Combined | `ci-cd.yaml` | Full pipeline on main branch |
+| Dev Deployment | `cd-dev.yaml` | Auto-deploy to dev environment |
+| Stage Deployment | `cd-stage.yaml` | Deploy to staging |
+| Prod Deployment | `cd-prod.yaml` | Deploy to production (manual approval) |
+
+### Trigger a Manual Deployment
+
+```bash
+# Push to trigger dev deployment
+git push origin feature-branch
+
+# Create PR for staging
+git push origin stage
+
+# Merge to main for production
+git push origin main
+```
+
+---
+
+## Testing
+
+### Run Tests Locally
+
+```bash
+# Run all tests with Docker Compose
+docker-compose -f docker-compose.test.yml up
+
+# Run tests for a specific service
+cd services/ai-service
+pytest tests/
+
+# Run integration tests
+docker-compose -f docker-compose.test.yml up integration-tests
+```
+
+### Load Testing with K6
+
+```bash
+# Run API load test
+cd loadtest/k6
+k6 run api-load-test.js
+
+# Run streaming load test
+k6 run streaming-load-test.js
+```
+
+---
+
+## Monitoring
+
+### Access Monitoring Dashboards
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| Prometheus | `http://localhost:9090` | Metrics and alerts |
+| Grafana | `http://localhost:3000` | Visualization dashboards |
+| AlertManager | `http://localhost:9093` | Alert management |
+
+### View Service Logs
+
+```bash
+# All services
+docker-compose logs -f
+
+# Specific service
+docker-compose logs -f ai-service
+
+# Kubernetes pods
+kubectl logs -f deployment/ai-service
+```
+
+---
+
+## Makefile Commands
+
+| Command | Description |
+|---------|-------------|
+| `make up` | Start all services with Docker Compose |
+| `make down` | Stop all services |
+| `make logs` | View logs from all services |
+| `make health` | Run health checks on all services |
+| `make test` | Run all tests |
+| `make lint` | Run linting on all code |
+| `make build` | Build all Docker images |
+| `make deploy-dev` | Deploy to development environment |
+| `make deploy-stage` | Deploy to staging environment |
+| `make deploy-prod` | Deploy to production environment |
+| `make terraform-init` | Initialize Terraform |
+| `make terraform-plan` | Plan Terraform changes |
+| `make terraform-apply` | Apply Terraform changes |
+| `make k8s-apply` | Apply Kubernetes manifests |
+| `make helm-install` | Install Helm charts |
+| `make clean` | Remove all containers and volumes |
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+| Issue | Solution |
+|-------|--------|
+| Port already in use | Change port in docker-compose.yml or stop conflicting service |
+| Docker build fails | Clear build cache: `docker builder prune` |
+| Terraform state locked | Run `terraform force-unlock <LOCK_ID>` |
+| Kubernetes pods not ready | Check `kubectl describe pod <pod-name>` |
+| Database connection failed | Verify DATABASE_URL and PostgreSQL is running |
+| Service health check fails | Check service logs: `docker-compose logs <service>` |
+
+### Getting Help
+
+- Check `README.md` for project overview
+- Review `PROJECT_STRUCTURE.md` for directory layout
+- See `MICROSERVICES_AUDIT.md` for service statuses
+- Consult `CONTRIBUTING.md` for contribution guidelines
+- Open an issue on GitHub for bugs or feature requests
+
+---
+
+## Next Steps
+
+1. Complete local setup with `make up`
+2. Verify all services are healthy with `make health`
+3. Run tests with `make test`
+4. Explore the monitoring dashboard at `http://localhost:9090`
+5. Start developing features or contributing to the project
+
+---
+
+**Created:** 2026-03-07 | **Last Updated:** 2026-04-06 | **Version:** 2.0.0 | **Status:** Production Ready

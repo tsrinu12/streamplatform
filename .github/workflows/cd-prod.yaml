@@ -18,23 +18,26 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     strategy:
       matrix:
         service: [auth-service, video-service, ai-service]
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Configure AWS credentials
+
+      - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole-prod
           aws-region: ${{ env.AWS_REGION }}
-      
+          role-session-name: GitHubActions-cd-prod
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-      
+
       - name: Build and push Docker image
         env:
           ECR_REPOSITORY: streamplatform/${{ matrix.service }}
@@ -48,31 +51,34 @@ jobs:
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Configure AWS credentials
+
+      - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole-prod
           aws-region: ${{ env.AWS_REGION }}
-      
+          role-session-name: GitHubActions-cd-prod-deploy
+
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
-      
+
       - name: Install Helm
         uses: azure/setup-helm@v3
         with:
           version: '3.13.0'
-      
+
       - name: Deploy to Production
         run: |
-          helm upgrade --install streamplatform ./helm/streamplatform \
-            --namespace production \
-            --create-namespace \
-            --values helm/streamplatform/values-prod.yaml \
-            --set image.tag=${{ github.sha }} \
-            --wait \
-            --timeout 10m
+          helm upgrade --install streamplatform ./helm/streamplatform \\
+          --namespace production \\
+          --create-namespace \\
+          --values helm/streamplatform/values-prod.yaml \\
+          --set image.tag=${{ github.sha }} \\
+          --wait \\
+          --timeout 10m

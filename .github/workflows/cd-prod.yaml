@@ -6,14 +6,16 @@ on:
       - main
     paths:
       - 'services/**'
-      - 'helm/**'
+      - 'helm/streamplatform/**'
       - '.github/workflows/cd-prod.yaml'
   workflow_dispatch:
+    branches:
+      - main
 
 env:
-  AWS_REGION: us-east-1
-  EKS_CLUSTER_NAME: streamplatform-prod
-  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME_PROD }}
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
 
 jobs:
   build-and-push:
@@ -30,27 +32,45 @@ jobs:
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole-prod
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole-prod-build
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions-cd-prod
+          role-session-name: GitHubActions-cd-prod-build
 
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push Docker image
+      - name: Build Docker image
         env:
           ECR_REPOSITORY: streamplatform/${{ matrix.service }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG services/${{ matrix.service }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Push Docker image
+        env:
+          ECR_REPOSITORY: streamplatform/${{ matrix.service }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       id-token: write
       contents: read
@@ -60,7 +80,7 @@ jobs:
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole-prod
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole-prod-deploy
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-cd-prod-deploy
 
@@ -75,10 +95,10 @@ jobs:
 
       - name: Deploy to Production
         run: |
-          helm upgrade --install streamplatform ./helm/streamplatform \\
-          --namespace production \\
-          --create-namespace \\
-          --values helm/streamplatform/values-prod.yaml \\
-          --set image.tag=${{ github.sha }} \\
-          --wait \\
-          --timeout 10m
+          helm upgrade --install streamplatform ./helm/streamplatform \
+            --namespace production \
+            --create-namespace \
+            --values helm/streamplatform/values-prod.yaml \
+            --set image.tag=${{ github.sha }} \
+            --wait \
+            --timeout 10m

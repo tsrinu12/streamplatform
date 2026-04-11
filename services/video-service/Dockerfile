@@ -4,7 +4,7 @@
 # ==============================================================================
 # Stage 1: Builder
 # ==============================================================================
-FROM golang:1.21.8-alpine3.18 AS builder
+FROM golang:1.22.3-alpine3.18 AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates

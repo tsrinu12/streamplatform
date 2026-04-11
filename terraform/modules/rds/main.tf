@@ -10,7 +10,7 @@ resource "aws_db_instance" "streamplatform" {
   password             = var.db_password
   db_subnet_group_name = var.db_subnet_group_name
   vpc_security_group_ids = [var.rds_sg_id]
-  skip_final_snapshot  = true
+  skip_final_snapshot  = false
   multi_az             = true
   storage_type         = "gp3"
   performance_insights_enabled = true

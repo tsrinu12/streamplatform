@@ -9,13 +9,17 @@ on:
       - 'helm/streamplatform/**'
       - '.github/workflows/cd-dev.yaml'
 
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME_DEV }}
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: development
     permissions:
       id-token: write
       contents: read
-    environment: development
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,12 +28,12 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole-dev
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-cd-dev
 
       - name: Update kubeconfig
         run: |
-          aws eks update-kubeconfig --name streamplatform-dev --region us-east-1
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
       - name: Install Helm
         uses: azure/setup-helm@v3
@@ -38,10 +42,10 @@ jobs:
 
       - name: Deploy to Development
         run: |
-          helm upgrade --install streamplatform ./helm/streamplatform \\
-          --namespace development \\
-          --create-namespace \\
-          --values helm/streamplatform/values-dev.yaml \\
-          --set image.tag=${{ github.sha }} \\
-          --wait \\
-          --timeout 10m
+          helm upgrade --install streamplatform ./helm/streamplatform \
+            --namespace development \
+            --create-namespace \
+            --values helm/streamplatform/values-dev.yaml \
+            --set image.tag=${{ github.sha }} \
+            --wait \
+            --timeout 10m

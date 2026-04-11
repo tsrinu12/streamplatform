@@ -12,6 +12,7 @@ resource "aws_db_instance" "streamplatform" {
   vpc_security_group_ids = [var.rds_sg_id]
   skip_final_snapshot  = true
   multi_az             = true
+  skip_final_snapshot = false
   storage_type         = "gp3"
   performance_insights_enabled = true
 }

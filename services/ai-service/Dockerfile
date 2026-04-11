@@ -5,7 +5,7 @@
 # Stage 1: Builder
 # ==============================================================================
 # Pin to specific Python version for security and reproducibility
-FROM python:3.11.6-slim-bookworm AS base
+FROM python:3.14.0-slim-bookworm AS base
 
 WORKDIR /app
 
@@ -29,7 +29,7 @@ COPY . .
 # Stage 2: Production (Minimal image)
 # ==============================================================================
 # Pin to specific Python version
-FROM python:3.11.6-slim-bookworm AS production
+FROM python:3.14.0-slim-bookworm AS production
 
 WORKDIR /app
 

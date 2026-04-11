@@ -5,44 +5,67 @@ on:
     tags:
       - 'v*.*.*-rc*'
 
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME_STAGE }}
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: staging
-    
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole-stage
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-cd-stage
 
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image to Amazon ECR
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: $ECR_REGISTRY/streamplatform/auth-service:${{ github.ref_name }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Build, tag, and push images to Amazon ECR
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.ref_name }}
         run: |
-          for service in auth-service video-service ai-service reward-service notification-service web-app; do
-            docker build -t $ECR_REGISTRY/streamplatform-$service:$IMAGE_TAG ./services/$service
-            docker push $ECR_REGISTRY/streamplatform-$service:$IMAGE_TAG
+          for service in auth-service video-service ai-service reward-service notification-service recommendation-service computer-vision-service nlp-service search-service transcode-service; do
+            docker build -t $ECR_REGISTRY/streamplatform/$service:$IMAGE_TAG ./services/$service
+            docker push $ECR_REGISTRY/streamplatform/$service:$IMAGE_TAG
           done
 
       - name: Install Helm
         uses: azure/setup-helm@v3
+        with:
+          version: '3.13.0'
 
       - name: Deploy to EKS
         run: |
-          aws eks update-kubeconfig --name streamplatform-stage
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
           helm upgrade --install streamplatform ./helm/streamplatform \
             --namespace staging \
             --create-namespace \
             --values ./helm/streamplatform/values-stage.yaml \
-            --set image.tag=${{ github.ref_name }}
+            --set image.tag=${{ github.ref_name }} \
+            --wait \
+            --timeout 10m

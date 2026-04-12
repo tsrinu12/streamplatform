@@ -1,0 +1,923 @@
+# ============================================================
+# StreamPlatform - GitLab CI/CD Pipeline
+# Enterprise Multi-Environment Microservices Platform
+# ============================================================
+#
+# Pipeline Stages:
+#   1.  validate     - Lint & static analysis (Terraform, Dockerfiles, Helm)
+#   2.  build        - Build Docker images for all 10 microservices
+#   3.  test         - Unit tests + smoke tests per service
+#   4.  security     - Container image scanning (Trivy)
+#   5.  publish      - Push images to GitLab Container Registry
+#   6.  deploy-dev   - Helm deploy to Dev + ArgoCD sync (auto on main)
+#   7.  deploy-stage - Helm deploy to Staging + ArgoCD sync (auto on main, after dev)
+#   8.  deploy-prod  - Helm deploy to Production + ArgoCD sync (manual gate, on tags)
+#   9.  loadtest     - K6 smoke test against staging after deploy
+#   10. terraform    - Terraform plan/apply for all environments (infra changes)
+#   11. notify       - Slack notifications on pipeline success/failure
+#
+# Required GitLab CI/CD Variables (Settings > CI/CD > Variables):
+#   AWS_ACCESS_KEY_ID         - AWS credentials
+#   AWS_SECRET_ACCESS_KEY     - AWS credentials
+#   AWS_DEFAULT_REGION        - e.g. us-east-1
+#   KUBE_CONFIG_DEV           - base64-encoded kubeconfig for dev cluster
+#   KUBE_CONFIG_STAGE         - base64-encoded kubeconfig for stage cluster
+#   KUBE_CONFIG_PROD          - base64-encoded kubeconfig for prod cluster
+#   REGISTRY                  - GitLab registry (auto: $CI_REGISTRY)
+#   REGISTRY_USER             - GitLab registry user (auto: $CI_REGISTRY_USER)
+#   REGISTRY_PASSWORD         - GitLab registry password (auto: $CI_REGISTRY_PASSWORD)
+#   ARGOCD_SERVER             - ArgoCD server URL (e.g. argocd.streamplatform.internal)
+#   ARGOCD_AUTH_TOKEN         - ArgoCD API token (Settings > Accounts > Generate Token)
+#   SLACK_WEBHOOK_URL         - Slack Incoming Webhook URL for notifications
+# ============================================================
+
+variables:
+  # --- Registry ---
+  IMAGE_PREFIX: $CI_REGISTRY_IMAGE
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+
+  # --- Helm ---
+  HELM_CHART_PATH: ./helm/streamplatform
+  HELM_RELEASE_NAME: streamplatform
+
+  # --- Terraform ---
+  TF_VERSION: "1.6.6"
+  TF_IN_AUTOMATION: "true"
+
+  # --- Docker ---
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+
+  # --- ArgoCD ---
+  ARGOCD_APP_DEV: streamplatform-dev
+  ARGOCD_APP_STAGE: streamplatform-stage
+  ARGOCD_APP_PROD: streamplatform-prod
+
+  # --- Services list (used in matrix-style jobs) ---
+  SERVICES: >
+    auth-service
+    ai-service
+    computer-vision-service
+    nlp-service
+    notification-service
+    recommendation-service
+    reward-service
+    search-service
+    transcode-service
+    video-service
+    streaming-gateway
+    drm-service
+    upload-service
+    abr-optimizer
+
+# ============================================================
+# Stage Definitions
+# ============================================================
+stages:
+  - validate
+  - build
+  - test
+  - security
+  - publish
+  - deploy-dev
+  - deploy-stage
+  - deploy-prod
+  - loadtest
+  - notify
+
+# ============================================================
+# Reusable Snippets (YAML Anchors)
+# ============================================================
+
+.docker_login: &docker_login
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+
+.deploy_template: &deploy_template
+  image:
+    name: alpine/helm:3.14.0
+    entrypoint: [""]
+  before_script:
+    - apk add --no-cache curl bash aws-cli
+    - mkdir -p ~/.kube
+  script:
+    - echo "$KUBECONFIG_B64" | base64 -d > ~/.kube/config
+    - chmod 600 ~/.kube/config
+    - |
+      helm upgrade --install $HELM_RELEASE_NAME $HELM_CHART_PATH \
+        --namespace $NAMESPACE \
+        --create-namespace \
+        -f $HELM_CHART_PATH/values-${ENVIRONMENT}.yaml \
+        --set global.image.tag=$IMAGE_TAG \
+        --set global.image.registry=$CI_REGISTRY_IMAGE \
+        --timeout 10m \
+        --wait \
+        --atomic
+
+.only_services_changed: &only_main_or_tag
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_TAG'
+
+# ArgoCD sync helper — reused by all deploy jobs
+.argocd_sync: &argocd_sync
+  - |
+    echo "=== Triggering ArgoCD sync for $ARGOCD_APP ==="
+    curl -s -o /dev/null -w "%{http_code}" \
+      -X POST \
+      -H "Authorization: Bearer $ARGOCD_AUTH_TOKEN" \
+      -H "Content-Type: application/json" \
+      "https://$ARGOCD_SERVER/api/v1/applications/$ARGOCD_APP/sync" \
+      -d '{
+        "revision": "'"$CI_COMMIT_SHA"'",
+        "prune": true,
+        "dryRun": false
+      }'
+    echo ""
+    echo "Waiting for ArgoCD sync to complete..."
+    for i in $(seq 1 30); do
+      STATUS=$(curl -s \
+        -H "Authorization: Bearer $ARGOCD_AUTH_TOKEN" \
+        "https://$ARGOCD_SERVER/api/v1/applications/$ARGOCD_APP" \
+        | grep -o '"phase":"[^"]*"' | head -1 | cut -d'"' -f4)
+      echo "  [$i/30] Sync status: $STATUS"
+      if [ "$STATUS" = "Succeeded" ]; then
+        echo "ArgoCD sync succeeded!"
+        break
+      elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Error" ]; then
+        echo "ArgoCD sync FAILED with status: $STATUS"
+        exit 1
+      fi
+      sleep 10
+    done
+
+# Slack notification helper
+.slack_notify: &slack_notify
+  image: alpine:3.19
+  before_script:
+    - apk add --no-cache curl
+  when: always
+
+# ============================================================
+# Stage: VALIDATE
+# ============================================================
+
+validate:terraform:
+  stage: validate
+  image:
+    name: hashicorp/terraform:$TF_VERSION
+    entrypoint: [""]
+  script:
+    - |
+      for env in dev stage prod; do
+        echo "=== Validating terraform/environments/$env ==="
+        cd terraform/environments/$env
+        terraform init -backend=false
+        terraform validate
+        cd -
+      done
+  rules:
+    - changes:
+        - terraform/**/*
+
+validate:helm:
+  stage: validate
+  image:
+    name: alpine/helm:3.14.0
+    entrypoint: [""]
+  script:
+    - helm lint $HELM_CHART_PATH
+    - helm lint $HELM_CHART_PATH -f $HELM_CHART_PATH/values-dev.yaml
+    - helm lint $HELM_CHART_PATH -f $HELM_CHART_PATH/values-stage.yaml
+    - helm lint $HELM_CHART_PATH -f $HELM_CHART_PATH/values-prod.yaml
+  rules:
+    - changes:
+        - helm/**/*
+
+validate:dockerfiles:
+  stage: validate
+  image: hadolint/hadolint:latest-alpine
+  script:
+    - |
+      find services/ -name "Dockerfile" | while read f; do
+        echo "=== Linting: $f ==="
+        hadolint "$f"
+      done
+  allow_failure: true   # advisory — won't block pipeline
+
+validate:python-lint:
+  stage: validate
+  image: python:3.11-slim
+  script:
+    - pip install flake8 black isort --quiet
+    - |
+      find services/ -name "*.py" | xargs flake8 --max-line-length=120 || true
+      find services/ -name "*.py" | xargs black --check --diff || true
+  allow_failure: true
+
+# ============================================================
+# Stage: BUILD
+# (One job per service — parallel Docker builds)
+# ============================================================
+
+.build_service: &build_service
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind
+  <<: *docker_login
+  script:
+    - |
+      IMAGE="$IMAGE_PREFIX/$SERVICE:$IMAGE_TAG"
+      echo "Building $IMAGE from services/$SERVICE"
+      docker build \
+        --cache-from "$IMAGE_PREFIX/$SERVICE:latest" \
+        --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+        --build-arg VCS_REF=$CI_COMMIT_SHA \
+        --label "com.streamplatform.version=$IMAGE_TAG" \
+        -t "$IMAGE" \
+        -t "$IMAGE_PREFIX/$SERVICE:latest" \
+        services/$SERVICE
+      docker save "$IMAGE" | gzip > /tmp/${SERVICE}-image.tar.gz
+  artifacts:
+    paths:
+      - /tmp/*-image.tar.gz
+    expire_in: 1 hour
+
+build:auth-service:
+  <<: *build_service
+  variables:
+    SERVICE: auth-service
+
+build:ai-service:
+  <<: *build_service
+  variables:
+    SERVICE: ai-service
+
+build:computer-vision-service:
+  <<: *build_service
+  variables:
+    SERVICE: computer-vision-service
+
+build:nlp-service:
+  <<: *build_service
+  variables:
+    SERVICE: nlp-service
+
+build:notification-service:
+  <<: *build_service
+  variables:
+    SERVICE: notification-service
+
+build:recommendation-service:
+  <<: *build_service
+  variables:
+    SERVICE: recommendation-service
+
+build:reward-service:
+  <<: *build_service
+  variables:
+    SERVICE: reward-service
+
+build:search-service:
+  <<: *build_service
+  variables:
+    SERVICE: search-service
+
+build:transcode-service:
+  <<: *build_service
+  variables:
+    SERVICE: transcode-service
+
+build:video-service:
+  <<: *build_service
+  variables:
+    SERVICE: video-service
+
+# ============================================================
+# Stage: TEST
+# ============================================================
+
+test:python-services:
+  stage: test
+  image: python:3.11-slim
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+    - name: redis:7-alpine
+      alias: redis
+  variables:
+    POSTGRES_DB: streamplatform_test
+    POSTGRES_USER: test
+    POSTGRES_PASSWORD: test
+    DATABASE_URL: "postgresql://test:test@postgres:5432/streamplatform_test"
+    REDIS_URL: "redis://redis:6379/0"
+  before_script:
+    - pip install pytest pytest-cov pytest-asyncio --quiet
+    - |
+      for svc in ai-service nlp-service recommendation-service; do
+        if [ -f "services/$svc/requirements.txt" ]; then
+          pip install -r services/$svc/requirements.txt --quiet
+        fi
+      done
+  script:
+    - |
+      pytest services/ \
+        --ignore=services/auth-service \
+        --ignore=services/video-service \
+        -v \
+        --tb=short \
+        --cov=services \
+        --cov-report=xml:coverage.xml \
+        --cov-report=term-missing \
+        || true   # non-blocking until full test suite is wired
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+  coverage: '/TOTAL.*\s+(\d+%)$/'
+
+test:node-services:
+  stage: test
+  image: node:20-alpine
+  before_script:
+    - |
+      for svc in auth-service video-service notification-service; do
+        if [ -f "services/$svc/package.json" ]; then
+          echo "Installing deps for $svc"
+          cd services/$svc && npm ci --silent && cd -
+        fi
+      done
+  script:
+    - |
+      for svc in auth-service video-service notification-service; do
+        if [ -f "services/$svc/package.json" ]; then
+          echo "=== Testing $svc ==="
+          cd services/$svc && npm test --if-present && cd -
+        fi
+      done
+
+test:db-migrations:
+  stage: test
+  image: postgres:16-alpine
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    POSTGRES_DB: streamplatform_test
+    POSTGRES_USER: test
+    POSTGRES_PASSWORD: test
+    PGPASSWORD: test
+  script:
+    - sleep 5  # wait for postgres
+    - |
+      for f in db/migrations/*.sql; do
+        echo "Running migration: $f"
+        psql -h postgres -U test -d streamplatform_test -f "$f"
+      done
+
+# ============================================================
+# Stage: SECURITY
+# ============================================================
+
+security:trivy-scan:
+  stage: security
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  services:
+    - docker:24-dind
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - |
+      FAILED=0
+      for SERVICE in $SERVICES; do
+        IMAGE="$IMAGE_PREFIX/${SERVICE}:$IMAGE_TAG"
+        echo "=== Scanning $IMAGE ==="
+        trivy image \
+          --exit-code 1 \
+          --severity HIGH,CRITICAL \
+          --no-progress \
+          --format template \
+          --template "@/contrib/gitlab.tpl" \
+          --output gl-container-scanning-report-${SERVICE}.json \
+          "$IMAGE" || FAILED=1
+      done
+      exit $FAILED
+  artifacts:
+    reports:
+      container_scanning: gl-container-scanning-report-*.json
+    expire_in: 7 days
+  allow_failure: true  # advisory; harden to false when ready
+  needs:
+    - job: build:auth-service
+    - job: build:ai-service
+    - job: build:video-service
+
+security:terraform-tfsec:
+  stage: security
+  image:
+    name: aquasec/tfsec-ci:latest
+    entrypoint: [""]
+  script:
+    - tfsec terraform/ --format=json --out=tfsec-report.json || true
+    - cat tfsec-report.json
+  artifacts:
+    paths:
+      - tfsec-report.json
+    expire_in: 7 days
+  allow_failure: true
+
+# ============================================================
+# Stage: PUBLISH
+# (Push all images to GitLab Container Registry)
+# ============================================================
+
+.publish_service: &publish_service
+  stage: publish
+  image: docker:24
+  services:
+    - docker:24-dind
+  <<: *docker_login
+  script:
+    - |
+      IMAGE="$IMAGE_PREFIX/$SERVICE:$IMAGE_TAG"
+      docker load < /tmp/${SERVICE}-image.tar.gz
+      docker push "$IMAGE"
+      docker push "$IMAGE_PREFIX/$SERVICE:latest"
+  <<: *only_main_or_tag
+
+publish:auth-service:
+  <<: *publish_service
+  variables:
+    SERVICE: auth-service
+  needs: ["build:auth-service"]
+
+publish:ai-service:
+  <<: *publish_service
+  variables:
+    SERVICE: ai-service
+  needs: ["build:ai-service"]
+
+publish:computer-vision-service:
+  <<: *publish_service
+  variables:
+    SERVICE: computer-vision-service
+  needs: ["build:computer-vision-service"]
+
+publish:nlp-service:
+  <<: *publish_service
+  variables:
+    SERVICE: nlp-service
+  needs: ["build:nlp-service"]
+
+publish:notification-service:
+  <<: *publish_service
+  variables:
+    SERVICE: notification-service
+  needs: ["build:notification-service"]
+
+publish:recommendation-service:
+  <<: *publish_service
+  variables:
+    SERVICE: recommendation-service
+  needs: ["build:recommendation-service"]
+
+publish:reward-service:
+  <<: *publish_service
+  variables:
+    SERVICE: reward-service
+  needs: ["build:reward-service"]
+
+publish:search-service:
+  <<: *publish_service
+  variables:
+    SERVICE: search-service
+  needs: ["build:search-service"]
+
+publish:transcode-service:
+  <<: *publish_service
+  variables:
+    SERVICE: transcode-service
+  needs: ["build:transcode-service"]
+
+publish:video-service:
+  <<: *publish_service
+  variables:
+    SERVICE: video-service
+  needs: ["build:video-service"]
+
+build:streaming-gateway:
+  <<: *build_service
+  variables:
+    SERVICE: streaming-gateway
+
+build:drm-service:
+  <<: *build_service
+  variables:
+    SERVICE: drm-service
+
+build:upload-service:
+  <<: *build_service
+  variables:
+    SERVICE: upload-service
+
+build:abr-optimizer:
+  <<: *build_service
+  variables:
+    SERVICE: abr-optimizer
+
+publish:streaming-gateway:
+  <<: *publish_service
+  variables:
+    SERVICE: streaming-gateway
+  needs: ["build:streaming-gateway"]
+
+publish:drm-service:
+  <<: *publish_service
+  variables:
+    SERVICE: drm-service
+  needs: ["build:drm-service"]
+
+publish:upload-service:
+  <<: *publish_service
+  variables:
+    SERVICE: upload-service
+  needs: ["build:upload-service"]
+
+publish:abr-optimizer:
+  <<: *publish_service
+  variables:
+    SERVICE: abr-optimizer
+  needs: ["build:abr-optimizer"]
+
+# ============================================================
+# Stage: DEPLOY - DEV
+# (Auto-deploys to dev on every push to main)
+# ============================================================
+
+deploy:dev:
+  stage: deploy-dev
+  <<: *deploy_template
+  environment:
+    name: dev
+    url: https://dev.streamplatform.internal
+    on_stop: destroy:dev
+  variables:
+    ENVIRONMENT: dev
+    NAMESPACE: streamplatform-dev
+    KUBECONFIG_B64: $KUBE_CONFIG_DEV
+    ARGOCD_APP: $ARGOCD_APP_DEV
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  needs:
+    - publish:auth-service
+    - publish:video-service
+    - publish:ai-service
+    - publish:nlp-service
+    - publish:computer-vision-service
+    - publish:recommendation-service
+    - publish:notification-service
+    - publish:reward-service
+    - publish:search-service
+    - publish:transcode-service
+    - publish:streaming-gateway
+    - publish:drm-service
+    - publish:upload-service
+    - publish:abr-optimizer
+  after_script:
+    - *argocd_sync
+
+destroy:dev:
+  stage: deploy-dev
+  image:
+    name: alpine/helm:3.14.0
+    entrypoint: [""]
+  before_script:
+    - apk add --no-cache bash
+    - mkdir -p ~/.kube
+    - echo "$KUBE_CONFIG_DEV" | base64 -d > ~/.kube/config
+  script:
+    - helm uninstall $HELM_RELEASE_NAME --namespace streamplatform-dev || true
+  environment:
+    name: dev
+    action: stop
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+
+# ============================================================
+# Stage: DEPLOY - STAGING
+# (Auto-deploys after successful dev deploy on main)
+# ============================================================
+
+deploy:stage:
+  stage: deploy-stage
+  <<: *deploy_template
+  environment:
+    name: stage
+    url: https://stage.streamplatform.internal
+    on_stop: destroy:stage
+  variables:
+    ENVIRONMENT: stage
+    NAMESPACE: streamplatform-stage
+    KUBECONFIG_B64: $KUBE_CONFIG_STAGE
+    ARGOCD_APP: $ARGOCD_APP_STAGE
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  needs:
+    - deploy:dev
+  after_script:
+    - *argocd_sync
+
+destroy:stage:
+  stage: deploy-stage
+  image:
+    name: alpine/helm:3.14.0
+    entrypoint: [""]
+  before_script:
+    - apk add --no-cache bash
+    - mkdir -p ~/.kube
+    - echo "$KUBE_CONFIG_STAGE" | base64 -d > ~/.kube/config
+  script:
+    - helm uninstall $HELM_RELEASE_NAME --namespace streamplatform-stage || true
+  environment:
+    name: stage
+    action: stop
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+
+# ============================================================
+# Stage: LOAD TEST
+# (K6 smoke test against staging post-deploy)
+# ============================================================
+
+loadtest:smoke:
+  stage: loadtest
+  image:
+    name: grafana/k6:latest
+    entrypoint: [""]
+  variables:
+    K6_BASE_URL: "https://stage.streamplatform.internal"
+  script:
+    - k6 run loadtest/k6/smoke.js --env BASE_URL=$K6_BASE_URL
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  needs:
+    - deploy:stage
+  allow_failure: true
+
+# ============================================================
+# Stage: DEPLOY - PRODUCTION
+# (Manual gate — only triggered on version tags: v1.2.3)
+# ============================================================
+
+deploy:prod:
+  stage: deploy-prod
+  <<: *deploy_template
+  environment:
+    name: production
+    url: https://streamplatform.io
+  variables:
+    ENVIRONMENT: prod
+    NAMESPACE: streamplatform-prod
+    KUBECONFIG_B64: $KUBE_CONFIG_PROD
+    ARGOCD_APP: $ARGOCD_APP_PROD
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+      when: manual
+  needs:
+    - publish:auth-service
+    - publish:video-service
+    - publish:ai-service
+    - publish:nlp-service
+    - publish:computer-vision-service
+    - publish:recommendation-service
+    - publish:notification-service
+    - publish:reward-service
+    - publish:search-service
+    - publish:transcode-service
+    - publish:streaming-gateway
+    - publish:drm-service
+    - publish:upload-service
+    - publish:abr-optimizer
+  after_script:
+    - *argocd_sync
+
+# ============================================================
+# Terraform Plan/Apply Jobs (optional, infra changes only)
+# ============================================================
+
+terraform:plan-dev:
+  stage: validate
+  image:
+    name: hashicorp/terraform:$TF_VERSION
+    entrypoint: [""]
+  before_script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+  script:
+    - cd terraform/environments/dev
+    - terraform init
+    - terraform plan -out=tfplan -no-color | tee ../../../tf-plan-dev.txt
+  artifacts:
+    paths:
+      - terraform/environments/dev/tfplan
+      - tf-plan-dev.txt
+    expire_in: 1 hour
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - terraform/**/*
+
+terraform:apply-dev:
+  stage: deploy-dev
+  image:
+    name: hashicorp/terraform:$TF_VERSION
+    entrypoint: [""]
+  before_script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+  script:
+    - cd terraform/environments/dev
+    - terraform init
+    - terraform apply -auto-approve tfplan
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - terraform/**/*
+      when: manual
+  needs:
+    - terraform:plan-dev
+
+# ============================================================
+# Terraform - Staging
+# ============================================================
+
+terraform:plan-stage:
+  stage: validate
+  image:
+    name: hashicorp/terraform:$TF_VERSION
+    entrypoint: [""]
+  before_script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+  script:
+    - cd terraform/environments/stage
+    - terraform init
+    - terraform plan -out=tfplan -no-color | tee ../../../tf-plan-stage.txt
+  artifacts:
+    paths:
+      - terraform/environments/stage/tfplan
+      - tf-plan-stage.txt
+    expire_in: 1 hour
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - terraform/**/*
+
+terraform:apply-stage:
+  stage: deploy-stage
+  image:
+    name: hashicorp/terraform:$TF_VERSION
+    entrypoint: [""]
+  before_script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+  script:
+    - cd terraform/environments/stage
+    - terraform init
+    - terraform apply -auto-approve tfplan
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - terraform/**/*
+      when: manual
+  needs:
+    - terraform:plan-stage
+
+# ============================================================
+# Terraform - Production
+# ============================================================
+
+terraform:plan-prod:
+  stage: validate
+  image:
+    name: hashicorp/terraform:$TF_VERSION
+    entrypoint: [""]
+  before_script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+  script:
+    - cd terraform/environments/prod
+    - terraform init
+    - terraform plan -out=tfplan -no-color | tee ../../../tf-plan-prod.txt
+  artifacts:
+    paths:
+      - terraform/environments/prod/tfplan
+      - tf-plan-prod.txt
+    expire_in: 1 hour
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+      changes:
+        - terraform/**/*
+
+terraform:apply-prod:
+  stage: deploy-prod
+  image:
+    name: hashicorp/terraform:$TF_VERSION
+    entrypoint: [""]
+  before_script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+  script:
+    - cd terraform/environments/prod
+    - terraform init
+    - terraform apply -auto-approve tfplan
+  environment:
+    name: production
+    url: https://streamplatform.io
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+      changes:
+        - terraform/**/*
+      when: manual   # Hard gate — always require human approval for prod infra
+  needs:
+    - terraform:plan-prod
+
+# ============================================================
+# Stage: NOTIFY (Slack)
+# Sends pipeline outcome to Slack on every main/tag run.
+# Triggered whether prior stages pass or fail (when: always).
+# ============================================================
+
+.slack_payload: &slack_payload
+  - |
+    if [ "$CI_JOB_STATUS" = "success" ]; then
+      COLOR="#36a64f"
+      EMOJI=":white_check_mark:"
+      STATUS_TEXT="succeeded"
+    else
+      COLOR="#cc0000"
+      EMOJI=":x:"
+      STATUS_TEXT="failed"
+    fi
+    curl -s -X POST "$SLACK_WEBHOOK_URL" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "attachments": [{
+          "color": "'"$COLOR"'",
+          "blocks": [
+            {
+              "type": "header",
+              "text": {
+                "type": "plain_text",
+                "text": "'"$EMOJI"' StreamPlatform Pipeline '"$STATUS_TEXT"'"
+              }
+            },
+            {
+              "type": "section",
+              "fields": [
+                { "type": "mrkdwn", "text": "*Branch/Tag:*\n`'"$CI_COMMIT_REF_NAME"'`" },
+                { "type": "mrkdwn", "text": "*Commit:*\n<'"$CI_PROJECT_URL/-/commit/$CI_COMMIT_SHA"'|'"$CI_COMMIT_SHORT_SHA"'>" },
+                { "type": "mrkdwn", "text": "*Triggered by:*\n'"$GITLAB_USER_NAME"'" },
+                { "type": "mrkdwn", "text": "*Pipeline:*\n<'"$CI_PIPELINE_URL"'|#'"$CI_PIPELINE_ID"'>" }
+              ]
+            },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "*Message:* '"$CI_COMMIT_MESSAGE"'"
+              }
+            }
+          ]
+        }]
+      }'
+
+notify:success:
+  stage: notify
+  <<: *slack_notify
+  script:
+    - export CI_JOB_STATUS=success
+    - *slack_payload
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_success
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+      when: on_success
+
+notify:failure:
+  stage: notify
+  <<: *slack_notify
+  script:
+    - export CI_JOB_STATUS=failure
+    - *slack_payload
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_failure
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+      when: on_failure

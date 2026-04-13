@@ -5,7 +5,7 @@
 # Stage 1: Base
 # ==============================================================================
 # Pin to specific Node.js version for security and reproducibility
-FROM node:18.18.2-alpine3.18 AS base
+FROM node:22.2.0-alpine3.18 AS base
 
 WORKDIR /app
 
@@ -22,7 +22,7 @@ COPY . .
 # Stage 2: Production (Minimal image)
 # ==============================================================================
 # Pin to specific Alpine version instead of 'latest'
-FROM node:18.18.2-alpine3.18 AS production
+FROM node:22.2.0-alpine3.18 AS production
 
 WORKDIR /app
 

@@ -26,7 +26,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o video-service ./c
 # Stage 2: Runtime (Minimal production image)
 # ==============================================================================
 # Pin to specific Alpine version instead of 'latest' for security
-FROM alpine:3.18.4
+FROM alpine:3.23.3
 
 # Add CA certificates and FFmpeg for video processing
 RUN apk --no-cache add ca-certificates ffmpeg

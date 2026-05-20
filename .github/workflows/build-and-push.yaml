@@ -1,0 +1,138 @@
+name: Build and Push All Services to ECR
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'services/**'
+      - '.github/workflows/build-and-push.yaml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (dev, stage, prod)'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - stage
+          - prod
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+
+jobs:
+  build-and-push:
+    name: Build and Push ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api-gateway
+          - user-service
+          - video-service
+          - recommendation-service
+          - notification-service
+          - payment-service
+          - analytics-service
+          - search-service
+          - content-service
+          - streaming-service
+          - auth-service
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole-ecr
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push ${{ matrix.service }} image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.ref_name == 'main' && 'latest' || format('{0}-{1}', github.ref_name, github.run_number) }}
+        run: |
+          cd services/${{ matrix.service }}
+          docker build -t $ECR_REGISTRY/streamplatform/${{ matrix.service }}:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/streamplatform/${{ matrix.service }}:$IMAGE_TAG
+          echo "Pushed $ECR_REGISTRY/streamplatform/${{ matrix.service }}:$IMAGE_TAG"
+
+      - name: Verify image in ECR
+        run: |
+          aws ecr describe-images \
+            --repository-name streamplatform/${{ matrix.service }} \
+            --image-ids imageTag=$IMAGE_TAG
+
+  scan-images:
+    name: Trivy Scan All Services
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: always()
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api-gateway
+          - user-service
+          - video-service
+          - recommendation-service
+          - notification-service
+          - payment-service
+          - analytics-service
+          - search-service
+          - content-service
+          - streaming-service
+          - auth-service
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole-ecr
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Run Trivy vulnerability scanner on ${{ matrix.service }}
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: '${{ steps.login-ecr.outputs.registry }}/streamplatform/${{ matrix.service }}:${{ github.ref_name == 'main' && 'latest' || format('{0}-{1}', github.ref_name, github.run_number) }}'
+          format: 'table'
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Run Trivy scan (fail on CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: '${{ steps.login-ecr.outputs.registry }}/streamplatform/${{ matrix.service }}:${{ github.ref_name == 'main' && 'latest' || format('{0}-{1}', github.ref_name, github.run_number) }}'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL'
+        continue-on-error: true

@@ -36,7 +36,7 @@ jobs:
           done
 
       - name: Install Helm
-        uses: azure/setup-helm@v3
+        uses: azure/setup-helm@v5
 
       - name: Deploy to EKS
         run: |
